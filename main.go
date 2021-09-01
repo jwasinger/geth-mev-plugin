@@ -1,33 +1,25 @@
 package main
 
-import (
-    "github.com/ethereum/go-ethereum/miner"
-)
+func PluginConstructor(config map[string]interface{}) (*MEVCollator, *MEVCollatorAPI, error) {
+    val, okay := config['maxMergedBundles']
+    if !okay {
+        return nil, nil, errors.New("no field maxMergedBundles in config")
+    }
 
-type MEVCollator struct {
+    mmb, okay := val.(int)
+    if !okay {
+        return nil, nil, errors.New("field maxMergedBundles must be an integer")
+    }
 
-}
+    maxMergedBundles := (uint)mmb
 
-func (MEVCollator) CollateBlock(bs miner.BlockState, pool miner.Pool) bool {
-    return false
-}
+    collator := MevCollator{
+        maxMergedBundles: maxMergedBundles,
+        bundleMu: make(sync.Mutex),
+        bundles: []MevBundle{},
+    }
 
-interface CollatorAPI {
-    func InitAPI(c Collator)
-}
+    api := NewMevCollatorAPI()
 
-type MEVCollatorAPI struct {
-    collator *MEVCollator
-}
-
-func (MEVCollatorAPI *api) AddBundle() {
-
-}
-
-func CreateCollatorAPI(c MEVCollator) MEVCollatorAPI {
-
-}
-
-func CreateCollator() MEVCollator {
-
+    return &collator, &api, nil
 }
