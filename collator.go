@@ -20,9 +20,13 @@ type simulatedBundle struct {
     originalBundle    MevBundle
 }
 
-var (
-    ErrBundleTxReverted = errors.New("bundle tx reverted")
-)
+type bundlerWork struct {
+    blockState BlockState
+    wg *sync.WorkGroup
+    simulatedBundles []simulatedBundle
+    maxMergedBundles uint
+    commitMu *sync.Mutex
+}
 
 func computeBundleGas(bundle MEVBundle, bs BlockState) simulatedBundle, err {
     state := bs.State()
@@ -204,17 +208,25 @@ func fillTransactions(bs BlockState, pool Pool, state ReadOnlyState) bool {
 	}
 	return true
 }
-func bundlerMainLoop(collator *MevCollator) {
+func bundlerMainLoop() {
     for {
         select {
         case bundlerWork := <-newWorkCh:
             if err := mergeBundles(bundlerWork); err != nil {
+                bundlerWork.wg.Done()
                 continue
             }
             if !fillTransactions(bundlerWork) {
+                bundlerWork.wg.Done()
                 continue
             }
-            collator.SuggestBlock(bundlerWork)
+            commitMu.Lock()
+            if work.profit.Cmp(bestProfit) > 0 {
+                bundlerWork.bestProfit.Set(work.profit)
+                bundlerWork.blockState.Commit()
+            }
+            commitMu.Unlock()
+            bundlerWork.wg.Done()
         case _ := <-exitCh:
             return
         }
@@ -273,11 +285,16 @@ func (c *MEVCollator) CollateBlock(bs BlockState, pool Pool, state ReadOnlyState
     }
 
     bundlesExpeced := 0
+    var wg sync.WaitGroup
+    wg.Add(1)
+    bestProfit := big.NewInt(0)
+    commitMu := sync.Mutex{}
 
-    c.bundleWorkers[0].newWorkCh <- bundlerWork{blockState: bs.Copy(), simulatedBundles: , counter: counter}
+    c.bundleWorkers[0].newWorkCh <- bundlerWork{wg: &wg, blockState: bs.Copy(), simulatedBundles: , counter: counter, bestProfit: bestProfit, commitMu: &commitMu}
 
     if len(bundles) > 0 {
         simulatedBundles := make([]simulatedBundle, len(bundles))
+        wg.Add(len(bundles))
 
         // 1) simulate each bundle in this go-routine (TODO see if doing it in parallel is worth it in a future iteration)
         simulatedBundles, err := simulateBundles(bs, bundles)
@@ -289,43 +306,14 @@ func (c *MEVCollator) CollateBlock(bs BlockState, pool Pool, state ReadOnlyState
             })
 
             // 2) concurrently build 0..N-1 blocks with 0..N-1 max merged bundles
-            for i := 0; i < len(bundles); i++ {
-                c.bundleWorkers[i].newWorkCh <- bundlerWork{blockState: bs.Copy(), simulatedBundles: nil, maxMergedBundles: 0}
+            for i := 1; i < len(bundles) + 1; i++ {
+                c.bundleWorkers[i].newWorkCh <- bundlerWork{blockState: bs.Copy(), wg: &wg, simulatedBundles: simulatedBundles, maxMergedBundles: i + 1, bestProfit: bestProfit, commitMu: &commitMu}
             }
         } else if err == ErrInterrupt {
             return
         }
     }
-
-    bundlesReceived := 0
-    for {
-        select {
-        case resp := <-c.workResponseCh:
-            // don't care about responses that are stale:
-            //  responses from previous calls to CollateBlock
-            if resp.counter != counter {
-                break
-            }
-            // workers set the blockState to nil in the response if they were
-            // interrupted (recommit interrupt, new chain canon head received)
-            if resp.blockState == nil {
-                return
-            }
-            bundlesReceived++
-            // only interrupt the sealer if a more profitable block is found
-            if bestProfit.Cmp(resp.profit) < 0 {
-                bestProfit.Set(resp.profit) // copy here just to be overly safe until POC is working
-                resp.blockState.Commit()
-            }
-            // we're done when all the eligible bundle blocks have been returned
-            // and the standard-strategy block (zero bundles) has been returned
-            if bundlesReceived == bundlesExpected + 1 {
-                return
-            }
-        case _ := <-c.closeCh:
-            return
-        }
-    }
+    wg.Wait()
 }
 
 func (c *MEVCollator) Start() {
@@ -340,4 +328,9 @@ func (c *MEVCollator) Start() {
 
 func (c *MEVCollator) Close() {
     close(c.closeCh)
+}
+
+func (c *MevCollator) SuggestNewBlock(work BundlerWork) {
+    c.commitMu.Lock()
+    defer c.commitMu.Unlock()
 }
