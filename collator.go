@@ -1,11 +1,23 @@
-type MEVCollator struct {
+package main
+
+import (
+    "math/big"
+    "sync"
+    "errors"
+
+    "github.com/ethereum/go-ethereum/core/types"
+    "github.com/ethereum/go-ethereum/common"
+    "github.com/ethereum/go-ethereum/miner"
+)
+
+type MevCollator struct {
     maxMergedBundles uint
     bundleMu sync.Mutex
     bundles []MevBundle
 }
 
 type MevBundle struct {
-    Txs               Transactions
+    Transactions types.Transactions
     BlockNumber       *big.Int
     MinTimestamp      uint64
     MaxTimestamp      uint64
@@ -21,14 +33,66 @@ type simulatedBundle struct {
 }
 
 type bundlerWork struct {
-    blockState BlockState
-    wg *sync.WorkGroup
+    blockState miner.BlockState
+    wg *sync.WaitGroup
     simulatedBundles []simulatedBundle
     maxMergedBundles uint
-    commitMu *sync.Mutex
+	pendingTxs map[common.Address]types.Transactions
+	commitMu *sync.Mutex
 }
 
-func computeBundleGas(bundle MEVBundle, bs BlockState) simulatedBundle, err {
+type bundleWorker struct {
+    exitCh chan struct{}
+    newWorkCh chan bundlerWork
+}
+
+func containsHash(arr []common.Hash, match common.Hash) bool {
+    for _, elem := range arr {
+        if elem == match {
+            return true
+        }
+    }
+    return false
+}
+
+var (
+	ErrBundleTxReverted = errors.New("bundle tx was reverted (not in allowed reverted list)")
+)
+
+// eligibleBundles returns a list of bundles valid for the given blockNumber/blockTimestamp
+// also prunes bundles that are outdated
+func (c *MevCollator) eligibleBundles(blockNumber *big.Int, blockTimestamp uint64) []MevBundle {
+        c.bundleMu.Lock()
+        defer c.bundleMu.Unlock()
+
+    // returned values
+    var ret []MevBundle
+    // rolled over values
+    var bundles []MevBundle
+
+    for _, bundle := range c.bundles {
+        // Prune outdated bundles
+        if (bundle.MaxTimestamp != 0 && blockTimestamp > bundle.MaxTimestamp) || blockNumber.Cmp(bundle.BlockNumber) > 0 {
+            continue
+        }
+
+        // Roll over future bundles
+        if (bundle.MinTimestamp != 0 && blockTimestamp < bundle.MinTimestamp) || blockNumber.Cmp(bundle.BlockNumber) < 0 {
+            bundles = append(bundles, bundle)
+            continue
+        }
+
+        // return the ones which are in time
+        ret = append(ret, bundle)
+        // keep the bundles around internally until they need to be pruned
+        bundles = append(bundles, bundle)
+    }
+
+    c.bundles = bundles
+    return ret
+}
+
+func computeBundleGas(bundle MevBundle, bs miner.BlockState, pendingTxs map[common.Address]types.Transactions) (simulatedBundle, error) {
     state := bs.State()
     header := bs.Header()
 	signer := bs.Signer()
@@ -39,10 +103,10 @@ func computeBundleGas(bundle MEVBundle, bs BlockState) simulatedBundle, err {
     ethSentToCoinbase := new(big.Int)
 
     for _, tx := range bundle.Transactions {
-        coinbaseBalanceBefore := bs.GetBalance(bs.Coinbase())
+        coinbaseBalanceBefore := state.GetBalance(bs.Etherbase())
 
         err, receipt := bs.AddTransaction(tx)
-        if err != nil && err.Is(ErrInterrupt) {
+        if err != nil && errors.Is(err, miner.ErrInterrupt) {
             return simulatedBundle{}, err
         }
         if receipt.Status == types.ReceiptStatusFailed && !containsHash(bundle.RevertingTxHashes, receipt.TxHash) {
@@ -67,12 +131,12 @@ func computeBundleGas(bundle MEVBundle, bs BlockState) simulatedBundle, err {
             }
         }
         gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
-        gasPrice, err := tx.EffectiveGasTip(header.BaseFee())
+        gasPrice, err := tx.EffectiveGasTip(header.BaseFee)
         if err != nil {
             return simulatedBundle{}, err
         }
         gasFeesTx := gasUsed.Mul(gasUsed, gasPrice)
-        coinbaseBalanceAfter := state.GetBalance(bs.Coinbase())
+        coinbaseBalanceAfter := state.GetBalance(bs.Etherbase)
         coinbaseDelta := big.NewInt(0).Sub(coinbaseBalanceAfter, coinbaseBalanceBefore)
         coinbaseDelta.Sub(coinbaseDelta, gasFeesTx)
         ethSentToCoinbase.Add(ethSentToCoinbase, coinbaseDelta)
@@ -95,41 +159,53 @@ func computeBundleGas(bundle MEVBundle, bs BlockState) simulatedBundle, err {
 
 // fill the block with as many bundles as the worker can add
 // return the BlockState 
-func mergeBundles(bs BlockState, work BundlerWork) BlockState, error {
+func mergeBundles(work bundlerWork) (miner.BlockState, uint, uint, *big.Int, *big.Int, error) {
+	bs := work.blockState
     if len(work.simulatedBundles) == 0 {
-        return bs
+        return bs, 0, 0, big.NewInt(0), big.NewInt(0), nil
     }
 
     beforeBs := bs.Copy()
     resultBs := bs
+
+    totalEth := big.NewInt(0)
+    ethSentToCoinbase := big.NewInt(0)
+    var numMergedBundles uint = 0
 
     for _, bundle := range work.simulatedBundles {
         // the floor gas price is 99/100 what was simulated at the top of the block
         floorGasPrice := new(big.Int).Mul(bundle.mevGasPrice, big.NewInt(99))
         floorGasPrice = floorGasPrice.Div(floorGasPrice, big.NewInt(100))
 
-        simmed, err := computeBundleGas(resultBs, bundle)
+        simmed, err := computeBundleGas(bundle, resultBs, work.pendingTxs)
         if err != nil {
-            if err.Is(ErrInterrupt) {
-                return nil, ErrInterrupt
+            if err.Is(miner.ErrInterrupt) {
+                return nil, 0, 0, nil, nil, ErrInterrupt
             } else {
-                resultBs = beforeBs
+                beforeBs = resultBs.Copy()
                 continue
             }
         } else if simmed.mevGasPrice.Cmp(floorGasPrice) <= 0 {
-            resultBs = beforeBs
+            resultBs = beforeBs.Copy()
             continue
+        }
+
+        totalEth.Add(totalEth, simmed.totalEth)
+        ethSentToCoinbase.Add(ethSentToCoinbase, simmed.ethSentToCoinbase)
+        numMergedBundles++
+        if numMergedBundles >= work.maxMergedBundles {
+            break
         }
     }
 
-    return resultBs, nil
+    return resultBs, numMergedBundles, numTxs, totalEth, ethSentToCoinbase, nil
 }
 
-func submitTransactions(bs BlockState, txs *types.TransactionsByPriceAndNonce) bool {
-    headerView := bs.Header()
+func submitTransactions(bs miner.BlockState, txs *types.TransactionsByPriceAndNonce) bool {
+    header := bs.Header()
 	for {
 		// If we don't have enough gas for any further transactions then we're done
-		available := headerView.GasLimit() - headerView.GasUsed()
+		available := header.GasLimit - header.GasUsed
 		if available < params.TxGas {
 			break
 		}
@@ -178,8 +254,8 @@ func submitTransactions(bs BlockState, txs *types.TransactionsByPriceAndNonce) b
 	return false
 }
 
-func fillTransactions(bs BlockState, pool Pool, state ReadOnlyState) bool {
-    headerView := bs.Header()
+func fillTransactions(bs miner.BlockState, txs map[common.Address]types.Transactions) bool {
+    header := bs.Header()
 	txs, err := pool.Pending(true)
 	if err != nil {
 		log.Error("could not get pending transactions from the pool", "err", err)
@@ -197,43 +273,56 @@ func fillTransactions(bs BlockState, pool Pool, state ReadOnlyState) bool {
 		}
 	}
 	if len(localTxs) > 0 {
-		if submitTransactions(bs, types.NewTransactionsByPriceAndNonce(bs.Signer(), localTxs, headerView.BaseFee())) {
+		if submitTransactions(bs, types.NewTransactionsByPriceAndNonce(bs.Signer(), localTxs, header.BaseFee)) {
 			return false
 		}
 	}
 	if len(remoteTxs) > 0 {
-		if submitTransactions(bs, types.NewTransactionsByPriceAndNonce(bs.Signer(), remoteTxs, headerView.BaseFee())) {
+		if submitTransactions(bs, types.NewTransactionsByPriceAndNonce(bs.Signer(), remoteTxs, header.BaseFee)) {
 			return false
 		}
 	}
 	return true
 }
-func bundlerMainLoop() {
+func (c *bundleWorker) workerMainLoop() {
     for {
         select {
-        case bundlerWork := <-newWorkCh:
-            if err := mergeBundles(bundlerWork); err != nil {
-                bundlerWork.wg.Done()
+        case work := <-newWorkCh:
+            // TODO move this block into its own function and do defer on work.wg.Done()
+            bs, numTxs, numBundles, totalEth, profit, err := mergeBundles(work)
+            if err != nil {
+                work.wg.Done()
                 continue
             }
-            if !fillTransactions(bundlerWork) {
-                bundlerWork.wg.Done()
+
+            if numTxs == 0 && work.maxMergedBundles != 0 {
+                work.wg.Done()
                 continue
             }
-            commitMu.Lock()
-            if work.profit.Cmp(bestProfit) > 0 {
-                bundlerWork.bestProfit.Set(work.profit)
-                bundlerWork.blockState.Commit()
+
+            if work.maxMergedBundles != 0 && numBundles != work.maxMergedBundles {
+                work.wg.Done()
+                continue
             }
-            commitMu.Unlock()
-            bundlerWork.wg.Done()
-        case _ := <-exitCh:
+
+            if !fillTransactions(bs, work.txs) {
+                work.wg.Done()
+                continue
+            }
+            work.commitMu.Lock()
+            if work.profit.Cmp(work.bestProfit) > 0 {
+                work.bestProfit.Set(work.profit)
+                bs.Commit()
+            }
+            work.commitMu.Unlock()
+            work.wg.Done()
+        case <-exitCh:
             return
         }
     }
 }
 
-func simulateBundles(bs BlockState, b Bundles) *[]simulatedBundle, error {
+func simulateBundles(bs miner.BlockState, b []MevBundle) (*[]simulatedBundle, error) {
     result = []simulatedBundle{}
 
     if len(b) == 0 {
@@ -268,7 +357,7 @@ func simulateBundles(bs BlockState, b Bundles) *[]simulatedBundle, error {
     return &result
 }
 
-func (c *MEVCollator) CollateBlock(bs BlockState, pool Pool, state ReadOnlyState) {
+func (c *MevCollator) CollateBlock(bs miner.BlockState, pool miner.Pool) {
     // create a copy of the BlockState and send it to each worker.
     if c.counter == math.MaxUint64 {
         c.counter = 0
@@ -278,36 +367,43 @@ func (c *MEVCollator) CollateBlock(bs BlockState, pool Pool, state ReadOnlyState
 
     // TODO signal to our "normal" worker to start building a normal block
 
-    bundles, err := c.eligibleBundles(bs)
+	header := bs.Header()
+    bundles, err := c.eligibleBundles(header.BlockNumber, header.Timestamp)
     if err != nil {
         log.Error("failed to fetch eligible bundles", "err", err)
         return
     }
 
-    bundlesExpeced := 0
+    var bundleBlocksExpected uint
     var wg sync.WaitGroup
     wg.Add(1)
     bestProfit := big.NewInt(0)
     commitMu := sync.Mutex{}
 
-    c.bundleWorkers[0].newWorkCh <- bundlerWork{wg: &wg, blockState: bs.Copy(), simulatedBundles: , counter: counter, bestProfit: bestProfit, commitMu: &commitMu}
+    pendingTxs, err := pool.Pending(true)
+    _ = err // can actually ignore err here because pool.Pending never returns an error
+
+    c.bundleWorkers[0].newWorkCh <- bundlerWork{wg: &wg, blockState: bs.Copy(), simulatedBundles: nil, counter: counter, bestProfit: bestProfit, commitMu: &commitMu, pendingTxs: pendingTxs}
 
     if len(bundles) > 0 {
         simulatedBundles := make([]simulatedBundle, len(bundles))
-        wg.Add(len(bundles))
+        if len(bundles) > maxMergedBundles {
+            bundleBlocksExpected := maxMergedBundles
+        } else {
+            bundleBlocksExpected := len(bundles)
+        }
+        wg.Add(bundleBlocksExpected)
 
         // 1) simulate each bundle in this go-routine (TODO see if doing it in parallel is worth it in a future iteration)
         simulatedBundles, err := simulateBundles(bs, bundles)
 		if err == nil {
-            bundlesExpeced := len(bundles)
-
             sort.SliceStable(simulatedBundles, func(i, j int) bool {
                 return simulatedBundles[j].mevGasPrice.Cmp(simulatedBundles[i].mevGasPrice) < 0
             })
 
             // 2) concurrently build 0..N-1 blocks with 0..N-1 max merged bundles
-            for i := 1; i < len(bundles) + 1; i++ {
-                c.bundleWorkers[i].newWorkCh <- bundlerWork{blockState: bs.Copy(), wg: &wg, simulatedBundles: simulatedBundles, maxMergedBundles: i + 1, bestProfit: bestProfit, commitMu: &commitMu}
+            for i := 0; i < bundleBlocksExpected; i++ {
+                c.bundleWorkers[i + 1].newWorkCh <- bundlerWork{blockState: bs.Copy(), wg: &wg, simulatedBundles: simulatedBundles, maxMergedBundles: i + 1, bestProfit: bestProfit, commitMu: &commitMu, pendingTxs: pendingTxs}
             }
         } else if err == ErrInterrupt {
             return
@@ -316,21 +412,17 @@ func (c *MEVCollator) CollateBlock(bs BlockState, pool Pool, state ReadOnlyState
     wg.Wait()
 }
 
-func (c *MEVCollator) Start() {
+func (c *MevCollator) Start() {
     for i := 0; i < c.maxMergedBundles; i++ {
-        worker := bundleWorker{
+        workers = append(workers, bundleWorker{
+            exitCh: c.closeCh,
+            newWorkCh: make(chan bundlerWork),
+        })
 
-        }
-
-        go c.collatorMainLoop()
+        go workers[i].workerMainLoop()
     }
 }
 
-func (c *MEVCollator) Close() {
+func (c *MevCollator) Close() {
     close(c.closeCh)
-}
-
-func (c *MevCollator) SuggestNewBlock(work BundlerWork) {
-    c.commitMu.Lock()
-    defer c.commitMu.Unlock()
 }

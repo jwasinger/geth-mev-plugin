@@ -1,26 +1,28 @@
+package main
+
+import (
+    "math/big"
+    "github.com/ethereum/go-ethereum/core/types"
+    "github.com/ethereum/go-ethereum/common"
+)
+
 type apiImpl struct {
     c *MevCollator
 }
 
-func (a *apiImpl) SendBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) {
+func (api *apiImpl) SendBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) {
+    c := api.c
     c.bundleMu.Lock()
     defer c.bundleMu.Unlock()
 
-	c.bundles = append(c.bundles, types.MevBundle{
-        Txs:               txs,
+	c.bundles = append(c.bundles, MevBundle{
+        Transactions:               txs,
         BlockNumber:       blockNumber,
         MinTimestamp:      minTimestamp,
         MaxTimestamp:      maxTimestamp,
         RevertingTxHashes: revertingTxHashes,
     })
 }
-
-/*
-// TODO need to provide an interface which provides a copy of the state for rpc to play with
-func (a *apiImpl) CallBundle() {
-
-}
-*/
 
 type MevCollatorAPI struct {
         impl apiImpl
