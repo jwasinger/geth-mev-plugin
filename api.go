@@ -1,37 +1,45 @@
 package main
 
 import (
-    "math/big"
-    "github.com/ethereum/go-ethereum/core/types"
-    "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"math/big"
 )
 
 type apiImpl struct {
-    c *MevCollator
+	c *MevCollator
 }
 
 func (api *apiImpl) SendBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) {
-    c := api.c
-    c.bundleMu.Lock()
-    defer c.bundleMu.Unlock()
+	c := api.c
+	c.bundleMu.Lock()
+	defer c.bundleMu.Unlock()
 
 	c.bundles = append(c.bundles, MevBundle{
-        Transactions:               txs,
-        BlockNumber:       blockNumber,
-        MinTimestamp:      minTimestamp,
-        MaxTimestamp:      maxTimestamp,
-        RevertingTxHashes: revertingTxHashes,
-    })
+		Transactions:      txs,
+		BlockNumber:       blockNumber,
+		MinTimestamp:      minTimestamp,
+		MaxTimestamp:      maxTimestamp,
+		RevertingTxHashes: revertingTxHashes,
+	})
 }
 
 type MevCollatorAPI struct {
-        impl apiImpl
+	impl apiImpl
+}
+
+func NewMevCollatorAPI(c *MevCollator) MevCollatorAPI {
+	return MevCollatorAPI{
+		impl: apiImpl{
+			c,
+		},
+	}
 }
 
 func (api *MevCollatorAPI) Version() string {
-    return "0.1"
+	return "0.1"
 }
 
 func (api *MevCollatorAPI) Service() interface{} {
-    return api.impl
+	return api.impl
 }
