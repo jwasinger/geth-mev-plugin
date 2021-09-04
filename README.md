@@ -2,7 +2,13 @@
 
 ## Setup
 
-`git submodule update --init && cd go-ethereum && make`
+Build Geth
+
+`(git submodule update --init && cd go-ethereum && make)`
+
+Build the plugin
+
+`make`
 
 ## Usage
 
