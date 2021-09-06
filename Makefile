@@ -1,2 +1,2 @@
 all:
-	go build -buildmode=plugin
+	GO11MODULE=on go build -buildmode=plugin -trimpath
