@@ -30,3 +30,5 @@ func PluginConstructor(config map[string]interface{}) (*MevCollator, *MevCollato
 
 	return &collator, &api, nil
 }
+
+func main() {}
