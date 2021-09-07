@@ -2,9 +2,7 @@
 
 ## Setup
 
-Build Geth
-
-`(git submodule update --init && cd go-ethereum && make)`
+Build geth (from this tag https://github.com/jwasinger/go-ethereum/releases/tag/collator) and copy the `geth` binary into the top-level folder of this repo.
 
 Build the plugin
 
