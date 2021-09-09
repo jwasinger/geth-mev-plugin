@@ -3,15 +3,21 @@ package main
 import (
 	"errors"
 	"sync"
+    "github.com/ethereum/go-ethereum/miner"
 )
 
-func PluginConstructor(config map[string]interface{}) (*MevCollator, *MevCollatorAPI, error) {
+func PluginConstructor(cfg *map[string]interface{}) (miner.Collator, miner.CollatorAPI, error) {
+    if cfg == nil {
+		return nil, nil, errors.New("expected config")
+    }
+    config := *cfg
+
 	val, okay := config["maxMergedBundles"]
 	if !okay {
 		return nil, nil, errors.New("no field maxMergedBundles in config")
 	}
 
-	mmb, okay := val.(int)
+	mmb, okay := val.(int64)
 	if !okay {
 		return nil, nil, errors.New("field maxMergedBundles must be an integer")
 	}
@@ -31,4 +37,6 @@ func PluginConstructor(config map[string]interface{}) (*MevCollator, *MevCollato
 	return &collator, &api, nil
 }
 
-func main() {}
+func main() {
+//        var asdf miner.CollatorPluginConstructorFunc = PluginConstructor
+}

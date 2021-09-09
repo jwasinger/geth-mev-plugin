@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-./geth  --miner.enablecollatorplugin --miner.collatorpluginfile $(pwd)/geth-mev-collator.so --miner.collatorpluginconfigfile $(pwd)/testnet/mev-collator.toml 
+./geth  --miner.enablecollatorplugin --miner.collatorpluginfile $(pwd)/mev.plugin --miner.collatorpluginconfigfile $(pwd)/local-testnet/config.toml 
