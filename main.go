@@ -2,15 +2,15 @@ package main
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/miner"
 	"sync"
-    "github.com/ethereum/go-ethereum/miner"
 )
 
 func PluginConstructor(cfg *map[string]interface{}) (miner.Collator, miner.CollatorAPI, error) {
-    if cfg == nil {
+	if cfg == nil {
 		return nil, nil, errors.New("expected config")
-    }
-    config := *cfg
+	}
+	config := *cfg
 
 	val, okay := config["maxMergedBundles"]
 	if !okay {
@@ -38,5 +38,5 @@ func PluginConstructor(cfg *map[string]interface{}) (miner.Collator, miner.Colla
 }
 
 func main() {
-//        var asdf miner.CollatorPluginConstructorFunc = PluginConstructor
+	//        var asdf miner.CollatorPluginConstructorFunc = PluginConstructor
 }

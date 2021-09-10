@@ -1,9 +1,12 @@
-.PHONY: all geth plugin
+.PHONY: all geth plugin copy_to_output
 
-all: geth plugin
+all: geth plugin copy_to_output
 
 geth:
 	go build -v -o geth github.com/ethereum/go-ethereum/cmd/geth
 
 plugin:
 	go build -v -o mev.plugin -buildmode=plugin .
+
+copy_to_output:
+	cp mev.plugin /datadisk-slow/projects/mev-geth-demo/ && cp geth /datadisk-slow/projects/mev-geth-demo/

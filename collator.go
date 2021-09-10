@@ -48,6 +48,7 @@ type bundlerWork struct {
 }
 
 type bundleWorker struct {
+	id               int
 	exitCh           chan struct{}
 	newWorkCh        chan bundlerWork
 	maxMergedBundles uint
@@ -178,6 +179,7 @@ func mergeBundles(work bundlerWork, pendingTxs map[common.Address]types.Transact
 	totalEth := big.NewInt(0)
 	ethSentToCoinbase := big.NewInt(0)
 	var numMergedBundles uint = 0
+	var numTxs uint = 0
 
 	for _, bundle := range work.simulatedBundles {
 		// the floor gas price is 99/100 what was simulated at the top of the block
@@ -197,6 +199,8 @@ func mergeBundles(work bundlerWork, pendingTxs map[common.Address]types.Transact
 			continue
 		}
 
+		numTxs += uint(len(simmed.originalBundle.Transactions))
+
 		totalEth.Add(totalEth, simmed.totalEth)
 		ethSentToCoinbase.Add(ethSentToCoinbase, simmed.ethSentToCoinbase)
 		numMergedBundles++
@@ -204,9 +208,6 @@ func mergeBundles(work bundlerWork, pendingTxs map[common.Address]types.Transact
 			break
 		}
 	}
-
-	var numTxs uint = 0
-	panic("numTxs")
 
 	return resultBs, numMergedBundles, numTxs, totalEth, ethSentToCoinbase, nil
 }
@@ -315,13 +316,19 @@ func (c *bundleWorker) workerMainLoop() {
 				continue
 			}
 
+			if numTxs == 0 && len(pendingTxs) == 0 {
+				work.wg.Done()
+				continue
+			}
+
+			// TODO add tx-fees to profit
 			if !fillTransactions(bs, pendingTxs, locals) {
 				work.wg.Done()
 				continue
 			}
 
 			work.commitMu.Lock()
-			if profit.Cmp(work.bestProfit) > 0 {
+			if profit.Cmp(work.bestProfit) >= 0 {
 				work.bestProfit.Set(profit)
 				bs.Commit()
 			}
@@ -360,7 +367,6 @@ func simulateBundles(bs miner.BlockState, b []MevBundle, pendingTxs map[common.A
 
 func (c *MevCollator) CollateBlock(bs miner.BlockState) {
 	// TODO signal to our "normal" worker to start building a normal block
-
 	header := bs.Header()
 	bundles := c.eligibleBundles(header.Number, header.Time)
 
@@ -409,6 +415,7 @@ func (c *MevCollator) Start(pool miner.Pool) {
 			newWorkCh:        make(chan bundlerWork),
 			maxMergedBundles: uint(i),
 			pool:             pool,
+			id:               i,
 		}
 
 		c.workers = append(c.workers, worker)

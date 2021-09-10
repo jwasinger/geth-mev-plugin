@@ -1,14 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"math/big"
-    "context"
-    "errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-    "github.com/ethereum/go-ethereum/rpc"
-    "github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 type ApiImpl struct {
@@ -17,39 +17,39 @@ type ApiImpl struct {
 
 // SendBundleArgs represents the arguments for a call.
 type SendBundleArgs struct {
-    Txs               []hexutil.Bytes `json:"txs"`
-    BlockNumber       rpc.BlockNumber `json:"blockNumber"`
-    MinTimestamp      *uint64         `json:"minTimestamp"`
-    MaxTimestamp      *uint64         `json:"maxTimestamp"`
-    RevertingTxHashes []common.Hash   `json:"revertingTxHashes"`
+	Txs               []hexutil.Bytes `json:"txs"`
+	BlockNumber       rpc.BlockNumber `json:"blockNumber"`
+	MinTimestamp      *uint64         `json:"minTimestamp"`
+	MaxTimestamp      *uint64         `json:"maxTimestamp"`
+	RevertingTxHashes []common.Hash   `json:"revertingTxHashes"`
 }
 
 func (api *ApiImpl) SendBundle(ctx context.Context, args SendBundleArgs) error {
-    var txs types.Transactions
-    if len(args.Txs) == 0 {
-        return errors.New("bundle missing txs")
-    }
-    if args.BlockNumber == 0 {
-        return errors.New("bundle missing blockNumber")
-    }
+	var txs types.Transactions
+	if len(args.Txs) == 0 {
+		return errors.New("bundle missing txs")
+	}
+	if args.BlockNumber == 0 {
+		return errors.New("bundle missing blockNumber")
+	}
 
-    for _, encodedTx := range args.Txs {
-        tx := new(types.Transaction)
-        if err := tx.UnmarshalBinary(encodedTx); err != nil {
-            return err
-        }
-        txs = append(txs, tx)
-    }
+	for _, encodedTx := range args.Txs {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(encodedTx); err != nil {
+			return err
+		}
+		txs = append(txs, tx)
+	}
 
-    var minTimestamp, maxTimestamp uint64
-    if args.MinTimestamp != nil {
-        minTimestamp = *args.MinTimestamp
-    }
-    if args.MaxTimestamp != nil {
-        maxTimestamp = *args.MaxTimestamp
-    }
+	var minTimestamp, maxTimestamp uint64
+	if args.MinTimestamp != nil {
+		minTimestamp = *args.MinTimestamp
+	}
+	if args.MaxTimestamp != nil {
+		maxTimestamp = *args.MaxTimestamp
+	}
 
-    blockNumber := big.NewInt(args.BlockNumber.Int64())
+	blockNumber := big.NewInt(args.BlockNumber.Int64())
 
 	c := api.c
 	c.bundleMu.Lock()
@@ -63,7 +63,7 @@ func (api *ApiImpl) SendBundle(ctx context.Context, args SendBundleArgs) error {
 		RevertingTxHashes: args.RevertingTxHashes,
 	})
 
-    return nil
+	return nil
 }
 
 type MevCollatorAPI struct {
