@@ -114,7 +114,7 @@ func computeBundleGas(bundle MevBundle, bs miner.BlockState, pendingTxs map[comm
 		coinbaseBalanceBefore := state.GetBalance(bs.Etherbase())
 
 		err, receipt := bs.AddTransaction(tx)
-		if err != nil && errors.Is(err, miner.ErrInterrupt) {
+		if err != nil && (errors.Is(err, miner.ErrInterruptRecommit) || errors.Is(err, miner.ErrInterruptRecommit)) {
 			return simulatedBundle{}, err
 		}
 		if receipt.Status == types.ReceiptStatusFailed && !containsHash(bundle.RevertingTxHashes, receipt.TxHash) {
@@ -188,8 +188,8 @@ func mergeBundles(work bundlerWork, pendingTxs map[common.Address]types.Transact
 
 		simmed, err := computeBundleGas(bundle.originalBundle, resultBs, pendingTxs)
 		if err != nil {
-			if errors.Is(err, miner.ErrInterrupt) {
-				return nil, 0, 0, nil, nil, miner.ErrInterrupt
+			if errors.Is(err, miner.ErrInterruptRecommit) || errors.Is(err, miner.ErrInterruptNewHead) {
+				return nil, 0, 0, nil, nil, err
 			} else {
 				beforeBs = resultBs.Copy()
 				continue
@@ -252,7 +252,9 @@ func submitTransactions(bs miner.BlockState, txs *types.TransactionsByPriceAndNo
 		case errors.Is(err, miner.ErrTxTypeNotSupported):
 			// Pop the unsupported transaction without shifting in the next from the account
 			txs.Pop()
-		case errors.Is(err, miner.ErrInterrupt):
+		case errors.Is(err, miner.ErrInterruptRecommit):
+			return true
+		case errors.Is(err, miner.ErrInterruptNewHead):
 			return true
 		default:
 			// Strange error, discard the transaction and get the next in line (note, the
@@ -353,7 +355,7 @@ func simulateBundles(bs miner.BlockState, b []MevBundle, pendingTxs map[common.A
 		simulated, err := computeBundleGas(bundle, bsBefore, pendingTxs)
 		bsBefore = bs.Copy()
 		if err != nil {
-			if errors.Is(miner.ErrInterrupt, err) {
+			if errors.Is(miner.ErrInterruptRecommit, err) || errors.Is(miner.ErrInterruptNewHead, err) {
 				return nil, err
 			} else {
 				log.Error("failed to simulate bndle", "err", err)
@@ -365,7 +367,7 @@ func simulateBundles(bs miner.BlockState, b []MevBundle, pendingTxs map[common.A
 	return result, nil
 }
 
-func (c *MevCollator) CollateBlock(bs miner.BlockState) {
+func (c *MevCollator) CollateBlock(bs miner.BlockState, ctx miner.InterruptContext) {
 	// TODO signal to our "normal" worker to start building a normal block
 	header := bs.Header()
 	bundles := c.eligibleBundles(header.Number, header.Time)
@@ -400,7 +402,7 @@ func (c *MevCollator) CollateBlock(bs miner.BlockState) {
 			for i := 0; i < int(bundleBlocksExpected); i++ {
 				c.workers[i+1].newWorkCh <- bundlerWork{blockState: bs.Copy(), wg: &wg, simulatedBundles: simulatedBundles, bestProfit: bestProfit, commitMu: &commitMu}
 			}
-		} else if err == miner.ErrInterrupt {
+		} else if err == miner.ErrInterruptRecommit || err == miner.ErrInterruptNewHead {
 			return
 		}
 	}
