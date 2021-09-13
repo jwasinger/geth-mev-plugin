@@ -1,6 +1,6 @@
 # geth-mev-plugin
 
-Prototype of a reimplementation of mev-geth as a Geth mining plugin (https://github.com/jwasinger/go-ethereum/tree/collator-v3)
+Prototype of a reimplementation of mev-geth as a [Geth mining plugin](https://github.com/ethereum/go-ethereum/pull/23421)
 
 ## Usage
 
