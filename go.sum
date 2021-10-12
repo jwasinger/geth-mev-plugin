@@ -241,6 +241,10 @@ github.com/jwasinger/go-ethereum v1.10.7-0.20210927091819-4332fc37e133 h1:X62htV
 github.com/jwasinger/go-ethereum v1.10.7-0.20210927091819-4332fc37e133/go.mod h1:CaTMQrv51WaAlD2eULQ3f03KiahDRO28fleQcKjWrrg=
 github.com/jwasinger/go-ethereum v1.10.7-0.20211002132451-344bb7a709c2 h1:Rc3ctPAtv9Hk5P8PBRYnA7POg6thgS1H4gyATu7JBUs=
 github.com/jwasinger/go-ethereum v1.10.7-0.20211002132451-344bb7a709c2/go.mod h1:CaTMQrv51WaAlD2eULQ3f03KiahDRO28fleQcKjWrrg=
+github.com/jwasinger/go-ethereum v1.10.7-0.20211012162845-c1f32d6226b1 h1:hJI4zPk874d5O7mFxc59RYw6f/EfaNszoOWkTEUSRDY=
+github.com/jwasinger/go-ethereum v1.10.7-0.20211012162845-c1f32d6226b1/go.mod h1:CaTMQrv51WaAlD2eULQ3f03KiahDRO28fleQcKjWrrg=
+github.com/jwasinger/go-ethereum v1.10.7-0.20211012170806-6b185c954c73 h1:RWwDy290tR0/8p22f62QAm30DbdKBf9DB7hjs6Q1Aro=
+github.com/jwasinger/go-ethereum v1.10.7-0.20211012170806-6b185c954c73/go.mod h1:CaTMQrv51WaAlD2eULQ3f03KiahDRO28fleQcKjWrrg=
 github.com/jwilder/encoding v0.0.0-20170811194829-b4e1701a28ef/go.mod h1:Ct9fl0F6iIOGgxJ5npU/IUOhOhqlVrGjyIZc8/MagT0=
 github.com/karalabe/usb v0.0.0-20190919080040-51dc0efba356 h1:I/yrLt2WilKxlQKCM52clh5rGzTKpVctGT1lH4Dc8Jw=
 github.com/karalabe/usb v0.0.0-20190919080040-51dc0efba356/go.mod h1:Od972xHfMJowv7NGVDiWVxk2zxnWgjLlJzE+F4F7AGU=

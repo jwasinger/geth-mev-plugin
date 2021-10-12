@@ -11,7 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-type ApiImpl struct {
+type MevCollatorAPI struct {
 	c *MevCollator
 }
 
@@ -24,7 +24,7 @@ type SendBundleArgs struct {
 	RevertingTxHashes []common.Hash   `json:"revertingTxHashes"`
 }
 
-func (api *ApiImpl) SendBundle(ctx context.Context, args SendBundleArgs) error {
+func (api MevCollatorAPI) SendBundle(ctx context.Context, args SendBundleArgs) error {
 	var txs types.Transactions
 	if len(args.Txs) == 0 {
 		return errors.New("bundle missing txs")
@@ -64,24 +64,4 @@ func (api *ApiImpl) SendBundle(ctx context.Context, args SendBundleArgs) error {
 	})
 
 	return nil
-}
-
-type MevCollatorAPI struct {
-	impl ApiImpl
-}
-
-func NewMevCollatorAPI(c *MevCollator) MevCollatorAPI {
-	return MevCollatorAPI{
-		impl: ApiImpl{
-			c,
-		},
-	}
-}
-
-func (api *MevCollatorAPI) Version() string {
-	return "0.1"
-}
-
-func (api *MevCollatorAPI) Service() interface{} {
-	return &api.impl
 }
