@@ -342,7 +342,7 @@ func (c *MevCollator) CollateBlock(bs collator.BlockState, pool collator.Pool) {
 	panic("pls implement me")
 }
 
-func (c *MevCollator) CollateBlocks(miner collator.MinerState, pool collator.Pool, blockCh <-chan collator.BlockCollatorWork, exitCh <-chan struct{}) {
+func (c *MevCollator) CollateBlocks(pool collator.Pool, blockCh <-chan collator.BlockCollatorWork, exitCh <-chan struct{}) {
 	c.pool = pool
 	for i := 0; i < int(c.maxMergedBundles); i++ {
 		worker := bundleWorker{
